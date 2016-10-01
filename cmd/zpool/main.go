@@ -3,10 +3,10 @@ package main
 import (
 	"fmt"
 
-	"github.com/kelleyk/go-libzfs"
+	zfs "github.com/kelleyk/go-libzfs"
 )
 
-func main() {
+func listPools() {
 	pools, err := zfs.PoolOpenAll()
 	if err != nil {
 		panic(err)
@@ -34,6 +34,18 @@ func main() {
 			panic(err)
 		}
 
-		fmt.Printf("%v\n  state: %v\n  status: %v\n\n", name, state, status)
+		vdevTree, err := p.VDevTree()
+		if err != nil {
+			panic(err)
+		}
+
+		fmt.Printf("%v\n  state: %v\n  status: %v\n", name, state, status)
+		fmt.Printf("  root-vdev stat-state: %s\n", vdevTree.Stat.State)
+		fmt.Printf("  root-vdev scanstat-state: %s\n", vdevTree.ScanStat.State)
+		fmt.Printf("\n")
 	}
+}
+
+func main() {
+
 }

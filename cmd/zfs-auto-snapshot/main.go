@@ -4,6 +4,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log"
 
 	"github.com/Sirupsen/logrus"
 	"github.com/kelleyk/go-libzfs"
@@ -83,43 +84,6 @@ type Tool struct {
 	datasetsByName map[string]zfs.Dataset
 }
 
-/*
-// Return value:
-// - true iff the dataset has been deliberately selected
-// - true iff we *would* snapshot this but are skipping it for some temporary reason (like e.g. scrubbing)
-// - error
-func (tool *Tool) datasetExcluded() (bool, bool, error) {
-	if *skipScrub {
-		scanning, err := poolScanning(d)
-		if err != nil {
-			return false, false, err
-		}
-		if scanning {
-			// xxx...
-			continue
-		}
-	}
-}
-
-func (tool *Tool) targetDatasets() ([]*zfs.Dataset, error) {
-
-	ds, err := getDatasetsByName()
-	if err != nil {
-		return err
-	}
-	for name, d := range ds {
-		if !tool.datasetExcluded(d) {
-			targetDatasets = append(targetDatasets, d)
-		}
-	}
-
-}
-
-func (tool *Tool) allDatasets() ([]*zfs.Dataset, error) {
-
-}
-*/
-
 func (tool *Tool) cleanup() {
 	defer func() {
 		for _, d := range tool.rootDatasets {
@@ -156,21 +120,14 @@ func (tool *Tool) preinit() error {
 
 }
 
-func (tool *Tool) Main() error {
-	defer tool.cleanup()
-	if err := tool.preinit(); err != nil {
-		return err
-	}
-
-	l := tool.l
-
-	listPools()
+func (tool *Tool) selectDatasets(names []string) (map[string]zfs.Dataset, error) {
 
 	targetDatasets := make(map[string]zfs.Dataset)
-	if len(flag.Args()) == 0 {
-		return errors.New("filesystem argument list is empty")
+
+	if len(names) == 0 {
+		return nil, errors.New("filesystem argument list is empty")
 	}
-	if len(flag.Args()) == 1 && flag.Arg(0) == "//" {
+	if len(names) == 1 && flag.Arg(0) == "//" {
 		// TODO: If -recursive given, show warning that it is not necessary?
 		// apply -default-exclude
 		for path, d := range tool.datasetsByName {
@@ -180,13 +137,13 @@ func (tool *Tool) Main() error {
 	} else {
 		// show warning/error on -default-exclude here
 
-		for _, dArg := range flag.Args() {
+		for _, dArg := range names {
 			if dArg == "//" {
-				return errors.New("the // must be the only argument if it is given")
+				return nil, errors.New("the // must be the only argument if it is given")
 			}
 			d, ok := tool.datasetsByName[dArg]
 			if !ok {
-				return fmt.Errorf("no such dataset: %v", dArg)
+				return nil, fmt.Errorf("no such dataset: %v", dArg)
 			}
 			if *recursive {
 				if err := walkDataset(func(dd zfs.Dataset) error {
@@ -200,28 +157,40 @@ func (tool *Tool) Main() error {
 					targetDatasets[path] = dd
 					return nil
 				}, d); err != nil {
-					return err
+					return nil, err
 				}
 			} else {
 				path, err := d.Path()
 				if err != nil {
-					return err
+					return nil, err
 				}
 				targetDatasets[path] = d
 			}
 		}
 	}
 
+	return targetDatasets, nil
+}
+
+func (tool *Tool) Main() error {
+	defer tool.cleanup()
+	if err := tool.preinit(); err != nil {
+		return err
+	}
+
+	l := tool.l
+
+	targetDatasets, err := tool.selectDatasets(flag.Args())
+	if err != nil {
+		return err
+	}
+
 	for path, d := range targetDatasets {
-		// // apply default-exclude policy
-		// if *defaultExclude {
-		// 	// exclude any datasets that do not have "com.sun:auto-snapshot" set.
-		// 	for propID, v := range d.Properties {
-		// 		propName := zfs.DatasetPropertyToName(propID)
-		// 		log.Printf("  (%v) %v = %v", propID, propName, v.Value)
-		// 	}
-		// 	log.Printf("...")
-		// }
+		// apply default-exclude policy
+		if *defaultExclude {
+			// exclude any datasets that do not have "com.sun:auto-snapshot" set.
+			log.Printf("consider default-exclude policy...")
+		}
 
 		// apply skip-scrub to everything
 		if *skipScrub {
@@ -233,17 +202,6 @@ func (tool *Tool) Main() error {
 				l.WithFields(logrus.Fields{"dataset": path}).Info("dataset skipped due to scan in progress")
 				delete(targetDatasets, path)
 			}
-		}
-	}
-
-	for dsName, d := range targetDatasets {
-		fmt.Printf(" - %s\n", dsName)
-
-		if err := d.VisitProperties(func(propID zfs.Prop, propName string, prop zfs.Property) error {
-			fmt.Printf("   - %v = %v [%v]\n", propName, prop.Value, prop.Source)
-			return nil
-		}); err != nil {
-			return err
 		}
 	}
 
