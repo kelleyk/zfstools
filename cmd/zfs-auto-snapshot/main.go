@@ -171,6 +171,7 @@ func (tool *Tool) Main() error {
 		return errors.New("filesystem argument list is empty")
 	}
 	if len(flag.Args()) == 1 && flag.Arg(0) == "//" {
+		// TODO: If -recursive given, show warning that it is not necessary?
 		// apply -default-exclude
 		for path, d := range tool.datasetsByName {
 			targetDatasets[path] = d
@@ -211,8 +212,18 @@ func (tool *Tool) Main() error {
 		}
 	}
 
-	// apply skip-scrub to everything
 	for path, d := range targetDatasets {
+		// // apply default-exclude policy
+		// if *defaultExclude {
+		// 	// exclude any datasets that do not have "com.sun:auto-snapshot" set.
+		// 	for propID, v := range d.Properties {
+		// 		propName := zfs.DatasetPropertyToName(propID)
+		// 		log.Printf("  (%v) %v = %v", propID, propName, v.Value)
+		// 	}
+		// 	log.Printf("...")
+		// }
+
+		// apply skip-scrub to everything
 		if *skipScrub {
 			scanning, err := poolScanning(d)
 			if err != nil {
@@ -225,11 +236,16 @@ func (tool *Tool) Main() error {
 		}
 	}
 
-	for dsName, _ := range targetDatasets {
+	for dsName, d := range targetDatasets {
 		fmt.Printf(" - %s\n", dsName)
+
+		if err := d.VisitProperties(func(propID zfs.Prop, propName string, prop zfs.Property) error {
+			fmt.Printf("   - %v = %v [%v]\n", propName, prop.Value, prop.Source)
+			return nil
+		}); err != nil {
+			return err
+		}
 	}
-	panic("X")
-	_ = l
 
 	/*
 		targetDatasets, err = tool.targetDatasets()
