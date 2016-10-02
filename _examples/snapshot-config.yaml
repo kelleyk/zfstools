@@ -1,0 +1,7 @@
+series:
+  - label: tensec
+    interval: 10s
+    keep: 3
+  - label: hourly
+    interval: 1h
+    keep: 3

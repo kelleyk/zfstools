@@ -1,10 +1,17 @@
+// zfs-auto-snapshot is a Go analog of the "zfs-auto-snapshot" shell script that is distributed by the zfsonlinux
+// project (and others).
+//
+// It is *not* a direct port.  The principal difference is that this tool reads a configuration file specifying snapshot
+// series, whereas that script has to be invoked once per snapshot series.
+//
+// See README.md for details.
+//
 package main
 
 import (
 	"errors"
 	"flag"
 	"fmt"
-	"log"
 	"sort"
 	"strings"
 	"time"
@@ -12,31 +19,6 @@ import (
 	"github.com/Sirupsen/logrus"
 	"github.com/kelleyk/go-libzfs"
 )
-
-/*
-
-echo "Usage: $0 [options] [-l label] <'//' | name [name...]>
-  --default-exclude  Exclude datasets if com.sun:auto-snapshot is unset.
-  -d, --debug        Print debugging messages.
-  -e, --event=EVENT  Set the com.sun:auto-snapshot-desc property to EVENT.
-      --fast         Use a faster zfs list invocation.
-  -n, --dry-run      Print actions without actually doing anything.
-  -s, --skip-scrub   Do not snapshot filesystems in scrubbing pools.
-  -h, --help         Print this usage message.
-  -k, --keep=NUM     Keep NUM recent snapshots and destroy older snapshots.
-  -l, --label=LAB    LAB is usually 'hourly', 'daily', or 'monthly'.
-  -p, --prefix=PRE   PRE is 'zfs-auto-snap' by default.
-  -q, --quiet        Suppress warnings and notices at the console.
-      --send-full=F  Send zfs full backup. Unimplemented.
-      --send-incr=F  Send zfs incremental backup. Unimplemented.
-      --sep=CHAR     Use CHAR to separate date stamps in snapshot names.
-  -g, --syslog       Write messages into the system log.
-  -r, --recursive    Snapshot named filesystem and all descendants.
-  -v, --verbose      Print info messages.
-      --destroy-only Only destroy older snapshots, do not create new ones.
-      name           Filesystem and volume names, or '//' for all ZFS datasets.
-"
-*/
 
 const (
 	// AutoSnapshotProperty is the name of a property that can be attached to datasets in order to indicate whether they
@@ -114,7 +96,6 @@ func main() {
 }
 
 func (tool *Tool) Main() error {
-
 	defer tool.cleanup()
 	if err := tool.preinit(); err != nil {
 		return err
@@ -154,13 +135,27 @@ func (tool *Tool) Main() error {
 		}
 	}
 
-	series := []seriesConfig{
-		{"hourly", time.Hour, 3},
-		{"tensec", 10 * time.Second, 3},
+	if *configPath == "" {
+		// TODO: implement default paths (e.g. XDG config directories, /etc/zfs-auto-snapshot.yaml, etc.)
+		return fmt.Errorf("no config file path given")
+	}
+
+	conf, err := loadConfig(*configPath)
+	if err != nil {
+		return err
+	}
+
+	l.WithFields(logrus.Fields{"seriesQty": len(conf.Series)}).Info("loaded configuration file")
+	for _, series := range conf.Series {
+		l.WithFields(logrus.Fields{
+			"label":    series.Label,
+			"interval": series.Interval,
+			"keep":     series.Keep,
+		}).Info("loaded series configuration")
 	}
 
 	for _, d := range targetDatasets {
-		if err := tool.performSnapshots(d, series); err != nil {
+		if err := tool.manageSnapshots(d, []seriesConfig{}); err != nil {
 			return err
 		}
 	}
@@ -345,23 +340,24 @@ func (tool *Tool) getSnapshots(d zfs.Dataset, label string) ([]*snapMetadata, er
 	return snaps, nil
 }
 
-func (tool *Tool) performSnapshots(d zfs.Dataset, series []seriesConfig) error {
-	// ... for each configured interval, see if the interval has been exceeded ...
-
+// manageSnapshots takes a dataset and a list of configurations for snapshot series.  For each series, it creates a new
+// snapshot if the last snapshot in that series is older than the series' snapshot interval, and then removes any
+// snapshots in that series in excess of the number that series is configured to keep, starting with the oldest.
+func (tool *Tool) manageSnapshots(d zfs.Dataset, series []seriesConfig) error {
 	dsPath, err := d.Path()
 	if err != nil {
 		return err
 	}
 
 	for _, s := range series {
-		snaps, err := tool.getSnapshots(d, s.label)
+		snaps, err := tool.getSnapshots(d, s.Label)
 		if err != nil {
 			return err
 		}
 
-		log.Printf("snaps:\n")
+		tool.l.Debugf("snaps:\n")
 		for _, snap := range snaps {
-			log.Printf("%#v  ts=%s\n", *snap, snap.ts)
+			tool.l.Debugf("%#v  ts=%s\n", *snap, snap.ts)
 		}
 
 		now := time.Now()
@@ -370,14 +366,14 @@ func (tool *Tool) performSnapshots(d zfs.Dataset, series []seriesConfig) error {
 			tool.l.Debugf("interval since last snapshot: %v", now.Sub(snaps[0].ts))
 		}
 
-		if len(snaps) == 0 || now.Sub(snaps[0].ts) >= s.interval {
-			tool.l.WithFields(logrus.Fields{"dataset": dsPath, "label": s.label, "allowCreate": tool.allowCreate}).Info(
+		if len(snaps) == 0 || now.Sub(snaps[0].ts) >= s.Interval {
+			tool.l.WithFields(logrus.Fields{"dataset": dsPath, "label": s.Label, "allowCreate": tool.allowCreate}).Info(
 				"no snaps, or newest snap is still too old; will take a new one")
 
 			meta := &snapMetadata{
 				dataset: dsPath,
 				prefix:  *prefix,
-				label:   s.label,
+				label:   s.Label,
 				ts:      now,
 			}
 
@@ -392,14 +388,14 @@ func (tool *Tool) performSnapshots(d zfs.Dataset, series []seriesConfig) error {
 			}
 		}
 
-		if len(snaps) > s.keep {
-			tool.l.WithFields(logrus.Fields{"dataset": dsPath, "label": s.label, "allowDestroy": tool.allowDestroy}).Info("removing one or more snapshots")
+		if len(snaps) > s.Keep {
+			tool.l.WithFields(logrus.Fields{"dataset": dsPath, "label": s.Label, "allowDestroy": tool.allowDestroy}).Info("removing one or more snapshots")
 			if tool.allowDestroy {
-				if err := tool.removeSnapshots(d, snaps[s.keep:]); err != nil {
+				if err := tool.removeSnapshots(d, snaps[s.Keep:]); err != nil {
 					return err
 				}
 			} else {
-				for _, snap := range snaps[s.keep:] {
+				for _, snap := range snaps[s.Keep:] {
 					tool.l.WithFields(logrus.Fields{"snapshot": snap.Path()}).Info("snapshot would be removed")
 				}
 			}

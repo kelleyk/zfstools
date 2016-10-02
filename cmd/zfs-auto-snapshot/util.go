@@ -2,8 +2,10 @@ package main
 
 import zfs "github.com/kelleyk/go-libzfs"
 
+// walkDataset visits the dataset d and its children, including snapshots.
+//
 // TODO: move to go-libzfs
-// N.B.: This walks everything, including snapshots.
+//
 func walkDataset(f func(zfs.Dataset) error, d zfs.Dataset) error {
 	if err := f(d); err != nil {
 		return err
