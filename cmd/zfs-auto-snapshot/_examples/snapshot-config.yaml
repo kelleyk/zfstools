@@ -5,3 +5,9 @@ series:
   - label: hourly
     interval: 1h
     keep: 3
+  - label: daily
+    interval: 1d
+    keep: 3
+  - label: weekly
+    interval: 1w
+    keep: -1  # This is a special value that means "keep an infinite number".

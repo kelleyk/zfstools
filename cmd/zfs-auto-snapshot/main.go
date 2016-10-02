@@ -385,7 +385,7 @@ func (tool *Tool) manageSnapshots(d zfs.Dataset, series []seriesConfig) error {
 			}
 		}
 
-		if len(snaps) > s.Keep {
+		if s.Keep != -1 && len(snaps) > s.Keep {
 			tool.l.WithFields(logrus.Fields{"dataset": dsPath, "label": s.Label, "allowDestroy": tool.allowDestroy}).Info("removing one or more snapshots")
 			if tool.allowDestroy {
 				if err := tool.removeSnapshots(d, snaps[s.Keep:]); err != nil {

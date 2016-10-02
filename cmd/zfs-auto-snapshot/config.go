@@ -42,8 +42,8 @@ func (c *configFile) Validate() error {
 		if series.Label == "" {
 			return fmt.Errorf("series has empty label")
 		}
-		if series.Keep <= 0 {
-			return fmt.Errorf("series has keep <= 0")
+		if series.Keep <= 0 && series.Keep != -1 {
+			return fmt.Errorf("series has invalid value for 'keep'")
 		}
 		if series.Interval <= time.Duration(0) {
 			return fmt.Errorf("series has interval <= 0")
