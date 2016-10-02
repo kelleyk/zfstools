@@ -218,19 +218,29 @@ func (tool *Tool) getDatasetExcluded(d zfs.Dataset, defaultExclude bool) (bool, 
 
 func (tool *Tool) performSnapshots(d zfs.Dataset) error {
 	// Get existing snapshots.
-	fmt.Printf("----\n")
 	if err := visitSnapshots(func(dd zfs.Dataset) error {
+
 		path, err := dd.Path()
-		log.Printf("d: %v  [%v]", path, dd.Properties[zfs.DatasetPropType].Value)
 		if err != nil {
 			return err
 		}
+
+		meta, err := parseSnapName(*prefix, path)
+		if err != nil {
+			return err
+		}
+
+		if meta != nil {
+			// It's one of our auto snapshots!
+			log.Printf("  label=%q  ts=%q", meta.label, meta.ts)
+		}
+
 		return nil
 	}, d); err != nil {
 		return err
 	}
 
-	// ... for each existing interval, see if the interval has been exceeded ...
+	// ... for each configured interval, see if the interval has been exceeded ...
 
 	return nil
 }
