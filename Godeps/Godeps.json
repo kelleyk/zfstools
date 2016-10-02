@@ -22,7 +22,7 @@
 		},
 		{
 			"ImportPath": "github.com/kelleyk/gokk",
-			"Rev": "8d044070da70d86e81965c95ec05c2e7f6c1306e"
+			"Rev": "fb2a07b5545d43b443a409993e39e5fd35fd80a7"
 		},
 		{
 			"ImportPath": "github.com/pmezard/go-difflib/difflib",
