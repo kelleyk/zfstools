@@ -123,8 +123,15 @@ func getDatasetsByName() (map[string]zfs.Dataset, error) {
 	return datasetsByName, nil
 }
 
+// TODO: move to go-libzfs
 // N.B.: This walks everything, including snapshots.
 func walkDataset(f func(zfs.Dataset) error, d zfs.Dataset) error {
+	// dPath, err := d.Path()
+	// log.Printf("d: %v  [%v]", dPath, d.Properties[zfs.DatasetPropType].Value)
+	// if err != nil {
+	// 	panic("xxx")
+	// }
+
 	if err := f(d); err != nil {
 		return err
 	}
@@ -132,6 +139,19 @@ func walkDataset(f func(zfs.Dataset) error, d zfs.Dataset) error {
 	for _, child := range d.Children {
 		if err := walkDataset(f, child); err != nil {
 			return err
+		}
+	}
+	// log.Printf("  <- ret")
+	return nil
+}
+
+// TODO: move to go-libzfs
+func visitSnapshots(f func(zfs.Dataset) error, d zfs.Dataset) error {
+	for _, child := range d.Children {
+		if child.Properties[zfs.DatasetPropType].Value == "snapshot" {
+			if err := f(child); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

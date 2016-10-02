@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/Sirupsen/logrus"
 	"github.com/kelleyk/go-libzfs"
@@ -34,7 +35,20 @@ echo "Usage: $0 [options] [-l label] <'//' | name [name...]>
       name           Filesystem and volume names, or '//' for all ZFS datasets.
 "
 */
+
+const (
+	// AutoSnapshotProperty is the name of a property that can be attached to datasets in order to indicate whether they
+	// should be explicitly included or excluded from automatic snapshots.  When a value is not present, the dataset
+	// will be included if -default-exclude is not given, and excluded if it is.
+	//
+	// N.B.: user properties are *always* strings; they can be up to 1024 characters.
+	//
+	AutoSnapshotProperty = "com.sun:auto-snapshot"
+)
+
 var (
+	logLevel = flag.String("log-level", "WARN", "XXX: write usage string")
+
 	help        = flag.Bool("help", false, "Print this usage message.")
 	dryRun      = flag.Bool("dry-run", false, "Print actions without actually doing anything.")
 	destroyOnly = flag.Bool("destroy-only", false, "Only destroy older snapshots, do not create new ones.")
@@ -58,11 +72,15 @@ var (
 )
 
 func main() {
+	var err error
+
 	flag.Parse()
 
 	l := logrus.New()
-	_ = l
-	// TODO: set up logger
+	l.Level, err = logrus.ParseLevel(*logLevel)
+	if err != nil {
+		l.Fatal("failed to parse -log-level")
+	}
 
 	if *help {
 		// TODO: add to usage:
@@ -103,7 +121,7 @@ func (tool *Tool) preinit() error {
 	}
 
 	for _, d := range tool.rootDatasets {
-		walkDataset(func(dd zfs.Dataset) error {
+		if err := walkDataset(func(dd zfs.Dataset) error {
 			if dd.Properties[zfs.DatasetPropType].Value == "snapshot" {
 				return nil
 			}
@@ -113,7 +131,9 @@ func (tool *Tool) preinit() error {
 			}
 			tool.datasetsByName[path] = dd
 			return nil
-		}, d)
+		}, d); err != nil {
+			return nil
+		}
 	}
 
 	return nil
@@ -127,7 +147,7 @@ func (tool *Tool) selectDatasets(names []string) (map[string]zfs.Dataset, error)
 	if len(names) == 0 {
 		return nil, errors.New("filesystem argument list is empty")
 	}
-	if len(names) == 1 && flag.Arg(0) == "//" {
+	if len(names) == 1 && names[0] == "//" {
 		// TODO: If -recursive given, show warning that it is not necessary?
 		// apply -default-exclude
 		for path, d := range tool.datasetsByName {
@@ -172,7 +192,51 @@ func (tool *Tool) selectDatasets(names []string) (map[string]zfs.Dataset, error)
 	return targetDatasets, nil
 }
 
+func (tool *Tool) getDatasetExcluded(d zfs.Dataset, defaultExclude bool) (bool, error) {
+	l := tool.l
+
+	dPath, err := d.Path()
+	if err != nil {
+		return false, err
+	}
+
+	prop, ok := d.UserProperties[AutoSnapshotProperty]
+	if !ok {
+		return defaultExclude, nil
+	}
+
+	switch strings.ToLower(prop.Value) {
+	case "true":
+		return false, nil
+	case "false":
+		return true, nil
+	default:
+		l.WithFields(logrus.Fields{"dataset": dPath}).Warnf("unexpected value for property: %s", AutoSnapshotProperty)
+		return defaultExclude, nil
+	}
+}
+
+func (tool *Tool) performSnapshots(d zfs.Dataset) error {
+	// Get existing snapshots.
+	fmt.Printf("----\n")
+	if err := visitSnapshots(func(dd zfs.Dataset) error {
+		path, err := dd.Path()
+		log.Printf("d: %v  [%v]", path, dd.Properties[zfs.DatasetPropType].Value)
+		if err != nil {
+			return err
+		}
+		return nil
+	}, d); err != nil {
+		return err
+	}
+
+	// ... for each existing interval, see if the interval has been exceeded ...
+
+	return nil
+}
+
 func (tool *Tool) Main() error {
+
 	defer tool.cleanup()
 	if err := tool.preinit(); err != nil {
 		return err
@@ -186,13 +250,20 @@ func (tool *Tool) Main() error {
 	}
 
 	for path, d := range targetDatasets {
-		// apply default-exclude policy
-		if *defaultExclude {
-			// exclude any datasets that do not have "com.sun:auto-snapshot" set.
-			log.Printf("consider default-exclude policy...")
+		// Exclude datasets based on configuration properties and flags.
+		exclude, err := tool.getDatasetExcluded(d, *defaultExclude)
+		if err != nil {
+			return err
+		}
+		if exclude {
+			l.WithFields(logrus.Fields{"dataset": path}).Debug("excluded")
+			delete(targetDatasets, path)
+			continue
+		} else {
+			l.WithFields(logrus.Fields{"dataset": path}).Debug("not excluded")
 		}
 
-		// apply skip-scrub to everything
+		// Exclude datasets that are on pools that are being scanned (e.g. scrubbed or resilvered).
 		if *skipScrub {
 			scanning, err := poolScanning(d)
 			if err != nil {
@@ -205,40 +276,11 @@ func (tool *Tool) Main() error {
 		}
 	}
 
-	/*
-		targetDatasets, err = tool.targetDatasets()
-
-		for _, d := range targetDatasets {
-			scan, err := poolScanning(d)
-			if err != nil {
-				return err
-			}
-
-			if scan {
-				panic("scan")
-			}
+	for _, d := range targetDatasets {
+		if err := tool.performSnapshots(d); err != nil {
+			return err
 		}
-	*/
-
-	// the script then:
-	// - ZPOOL_STATUS=$(zpool status)
-	// - ZFS_LIST becomes a table of datasets and  the "com.sun:auto-snapshot" and  "com.sun:auto-snapshot:daily" (where daily is the -label) properties
-
-	/*
-		if [ -n "$opt_fast_zfs_list" ]
-		then
-		SNAPSHOTS_OLD=$(env LC_ALL=C zfs list -H -t snapshot -o name -s name|grep $opt_prefix |awk '{ print substr( $0, length($0) - 14, length($0) ) " " $0}' |sort -r -k1,1 -k2,2|awk '{ print substr( $0, 17, length($0) )}') \
-		|| { print_log error "zfs list $?: $SNAPSHOTS_OLD"; exit 137; }
-		else
-		SNAPSHOTS_OLD=$(env LC_ALL=C zfs list -H -t snapshot -S creation -o name) \
-		|| { print_log error "zfs list $?: $SNAPSHOTS_OLD"; exit 137; }
-		fi
-
-	*/
-
-	// listDatasets()
-
-	// walkVdevs()
+	}
 
 	return nil
 }
