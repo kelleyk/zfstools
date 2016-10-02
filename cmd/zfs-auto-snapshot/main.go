@@ -77,6 +77,14 @@ var (
 	// send-full, send-incr, sep
 )
 
+type Tool struct {
+	l                         *logrus.Logger
+	allowCreate, allowDestroy bool
+
+	rootDatasets   []zfs.Dataset
+	datasetsByName map[string]zfs.Dataset
+}
+
 func main() {
 	var err error
 
@@ -105,12 +113,59 @@ func main() {
 	}
 }
 
-type Tool struct {
-	l                         *logrus.Logger
-	allowCreate, allowDestroy bool
+func (tool *Tool) Main() error {
 
-	rootDatasets   []zfs.Dataset
-	datasetsByName map[string]zfs.Dataset
+	defer tool.cleanup()
+	if err := tool.preinit(); err != nil {
+		return err
+	}
+
+	l := tool.l
+
+	targetDatasets, err := tool.selectDatasets(flag.Args())
+	if err != nil {
+		return err
+	}
+
+	for path, d := range targetDatasets {
+		// Exclude datasets based on configuration properties and flags.
+		exclude, err := tool.datasetExcluded(d, *defaultExclude)
+		if err != nil {
+			return err
+		}
+		if exclude {
+			l.WithFields(logrus.Fields{"dataset": path}).Debug("excluded")
+			delete(targetDatasets, path)
+			continue
+		} else {
+			l.WithFields(logrus.Fields{"dataset": path}).Debug("not excluded")
+		}
+
+		// Exclude datasets that are on pools that are being scanned (e.g. scrubbed or resilvered).
+		if *skipScrub {
+			scanning, err := poolScanning(d)
+			if err != nil {
+				return err
+			}
+			if scanning {
+				l.WithFields(logrus.Fields{"dataset": path}).Info("dataset skipped due to scan in progress")
+				delete(targetDatasets, path)
+			}
+		}
+	}
+
+	series := []seriesConfig{
+		{"hourly", time.Hour, 3},
+		{"tensec", 10 * time.Second, 3},
+	}
+
+	for _, d := range targetDatasets {
+		if err := tool.performSnapshots(d, series); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (tool *Tool) cleanup() {
@@ -203,7 +258,7 @@ func (tool *Tool) selectDatasets(names []string) (map[string]zfs.Dataset, error)
 	return targetDatasets, nil
 }
 
-func (tool *Tool) getDatasetExcluded(d zfs.Dataset, defaultExclude bool) (bool, error) {
+func (tool *Tool) datasetExcluded(d zfs.Dataset, defaultExclude bool) (bool, error) {
 	l := tool.l
 
 	dPath, err := d.Path()
@@ -340,67 +395,14 @@ func (tool *Tool) performSnapshots(d zfs.Dataset, series []seriesConfig) error {
 		if len(snaps) > s.keep {
 			tool.l.WithFields(logrus.Fields{"dataset": dsPath, "label": s.label, "allowDestroy": tool.allowDestroy}).Info("removing one or more snapshots")
 			if tool.allowDestroy {
-				tool.removeSnapshots(d, snaps[s.keep:])
+				if err := tool.removeSnapshots(d, snaps[s.keep:]); err != nil {
+					return err
+				}
 			} else {
 				for _, snap := range snaps[s.keep:] {
 					tool.l.WithFields(logrus.Fields{"snapshot": snap.Path()}).Info("snapshot would be removed")
 				}
 			}
-		}
-	}
-
-	return nil
-}
-
-func (tool *Tool) Main() error {
-
-	defer tool.cleanup()
-	if err := tool.preinit(); err != nil {
-		return err
-	}
-
-	l := tool.l
-
-	targetDatasets, err := tool.selectDatasets(flag.Args())
-	if err != nil {
-		return err
-	}
-
-	for path, d := range targetDatasets {
-		// Exclude datasets based on configuration properties and flags.
-		exclude, err := tool.getDatasetExcluded(d, *defaultExclude)
-		if err != nil {
-			return err
-		}
-		if exclude {
-			l.WithFields(logrus.Fields{"dataset": path}).Debug("excluded")
-			delete(targetDatasets, path)
-			continue
-		} else {
-			l.WithFields(logrus.Fields{"dataset": path}).Debug("not excluded")
-		}
-
-		// Exclude datasets that are on pools that are being scanned (e.g. scrubbed or resilvered).
-		if *skipScrub {
-			scanning, err := poolScanning(d)
-			if err != nil {
-				return err
-			}
-			if scanning {
-				l.WithFields(logrus.Fields{"dataset": path}).Info("dataset skipped due to scan in progress")
-				delete(targetDatasets, path)
-			}
-		}
-	}
-
-	series := []seriesConfig{
-		{"hourly", time.Hour, 3},
-		{"tensec", 10 * time.Second, 3},
-	}
-
-	for _, d := range targetDatasets {
-		if err := tool.performSnapshots(d, series); err != nil {
-			return err
 		}
 	}
 
