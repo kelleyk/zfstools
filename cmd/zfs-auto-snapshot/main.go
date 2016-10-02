@@ -5,7 +5,9 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/Sirupsen/logrus"
 	"github.com/kelleyk/go-libzfs"
@@ -49,14 +51,18 @@ const (
 var (
 	logLevel = flag.String("log-level", "WARN", "XXX: write usage string")
 
-	help        = flag.Bool("help", false, "Print this usage message.")
-	dryRun      = flag.Bool("dry-run", false, "Print actions without actually doing anything.")
-	destroyOnly = flag.Bool("destroy-only", false, "Only destroy older snapshots, do not create new ones.")
+	help = flag.Bool("help", false, "Print this usage message.")
 
-	keep = flag.Int64("keep", 0, "Keep NUM recent snapshots and destroy older snapshots.")
+	dryRun       = flag.Bool("dry-run", false, "Print actions without actually doing anything.  This flag overrides all other flags that enable or disable particular actions.")
+	allowCreate  = flag.Bool("create", true, "Create new snapshots when appropriate (per configuration).")
+	allowDestroy = flag.Bool("destroy", true, "Destroy old snapshots when appropriate (per configuration).")
 
-	label = flag.String("label", "", "LAB is usually 'hourly', 'daily', or 'monthly'.")
-	event = flag.String("event", "", "Set the com.sun:auto-snapshot-desc property to EVENT.")
+	configPath = flag.String("config", "", "Path to configuration file.")
+
+	// {label, interval} have been moved to per-series configuration in the configuration file.
+
+	// TODO: implement me:
+	// event = flag.String("event", "", "Set the com.sun:auto-snapshot-desc property to EVENT.")
 
 	recursive      = flag.Bool("recursive", false, "Snapshot named filesystem and all descendants.")
 	defaultExclude = flag.Bool("default-exclude", false, "Exclude datasets if com.sun:auto-snapshot is unset.")
@@ -89,14 +95,19 @@ func main() {
 		return
 	}
 
-	tool := &Tool{l: l}
+	tool := &Tool{
+		l:            l,
+		allowCreate:  *allowCreate && !(*dryRun),
+		allowDestroy: *allowDestroy && !(*dryRun),
+	}
 	if err := tool.Main(); err != nil {
 		l.WithError(err).Fatal()
 	}
 }
 
 type Tool struct {
-	l *logrus.Logger
+	l                         *logrus.Logger
+	allowCreate, allowDestroy bool
 
 	rootDatasets   []zfs.Dataset
 	datasetsByName map[string]zfs.Dataset
@@ -216,31 +227,127 @@ func (tool *Tool) getDatasetExcluded(d zfs.Dataset, defaultExclude bool) (bool, 
 	}
 }
 
-func (tool *Tool) performSnapshots(d zfs.Dataset) error {
-	// Get existing snapshots.
-	if err := visitSnapshots(func(dd zfs.Dataset) error {
+func (tool *Tool) removeSnapshots(d zfs.Dataset, snaps []*snapMetadata) error {
 
-		path, err := dd.Path()
-		if err != nil {
-			return err
+	snapPaths := make(map[string]struct{})
+	for _, snap := range snaps {
+		snapPaths[snap.Path()] = struct{}{}
+	}
+
+	for _, dd := range d.Children {
+		if dd.Properties[zfs.DatasetPropType].Value == "snapshot" {
+
+			ddPath, err := dd.Path()
+			if err != nil {
+				return err
+			}
+
+			if _, ok := snapPaths[ddPath]; ok {
+				tool.l.WithFields(logrus.Fields{"snapshot": ddPath}).Info("removing snapshot")
+				if err := dd.Destroy(false); err != nil {
+					return err
+				}
+				delete(snapPaths, ddPath)
+			}
 		}
+	}
 
-		meta, err := parseSnapName(*prefix, path)
-		if err != nil {
-			return err
+	if len(snapPaths) != 0 {
+		return fmt.Errorf("failed to find all snapshots marked for deletion")
+	}
+
+	return nil
+}
+
+// getSnapshots returns all snapshots of the given dataset that have names like the ones produced by this tool and with
+// the given label (e.g. "hourly", "daily").  The snapshots are returned in order from most recent to least recent.
+func (tool *Tool) getSnapshots(d zfs.Dataset, label string) ([]*snapMetadata, error) {
+	snaps := []*snapMetadata{}
+
+	for _, dd := range d.Children {
+		if dd.Properties[zfs.DatasetPropType].Value == "snapshot" {
+
+			path, err := dd.Path()
+			if err != nil {
+				return []*snapMetadata{}, err
+			}
+
+			meta, err := parseSnapName(*prefix, path)
+			if err != nil {
+				return []*snapMetadata{}, err
+
+			}
+
+			if meta != nil && meta.label == label {
+				snaps = append(snaps, meta)
+			}
+
 		}
+	}
 
-		if meta != nil {
-			// It's one of our auto snapshots!
-			log.Printf("  label=%q  ts=%q", meta.label, meta.ts)
-		}
+	sort.Sort(byTS(snaps))
 
-		return nil
-	}, d); err != nil {
+	return snaps, nil
+}
+
+func (tool *Tool) performSnapshots(d zfs.Dataset, series []seriesConfig) error {
+	// ... for each configured interval, see if the interval has been exceeded ...
+
+	dsPath, err := d.Path()
+	if err != nil {
 		return err
 	}
 
-	// ... for each configured interval, see if the interval has been exceeded ...
+	for _, s := range series {
+		snaps, err := tool.getSnapshots(d, s.label)
+		if err != nil {
+			return err
+		}
+
+		log.Printf("snaps:\n")
+		for _, snap := range snaps {
+			log.Printf("%#v  ts=%s\n", *snap, snap.ts)
+		}
+
+		now := time.Now()
+
+		if len(snaps) > 0 {
+			tool.l.Debugf("interval since last snapshot: %v", now.Sub(snaps[0].ts))
+		}
+
+		if len(snaps) == 0 || now.Sub(snaps[0].ts) >= s.interval {
+			tool.l.WithFields(logrus.Fields{"dataset": dsPath, "label": s.label, "allowCreate": tool.allowCreate}).Info(
+				"no snaps, or newest snap is still too old; will take a new one")
+
+			meta := &snapMetadata{
+				dataset: dsPath,
+				prefix:  *prefix,
+				label:   s.label,
+				ts:      now,
+			}
+
+			snapProps := make(map[zfs.Prop]zfs.Property)
+			if tool.allowCreate {
+				_, err := zfs.DatasetSnapshot(meta.Path(), false, snapProps)
+				if err != nil {
+					return err
+				}
+
+				snaps = append([]*snapMetadata{meta}, snaps...)
+			}
+		}
+
+		if len(snaps) > s.keep {
+			tool.l.WithFields(logrus.Fields{"dataset": dsPath, "label": s.label, "allowDestroy": tool.allowDestroy}).Info("removing one or more snapshots")
+			if tool.allowDestroy {
+				tool.removeSnapshots(d, snaps[s.keep:])
+			} else {
+				for _, snap := range snaps[s.keep:] {
+					tool.l.WithFields(logrus.Fields{"snapshot": snap.Path()}).Info("snapshot would be removed")
+				}
+			}
+		}
+	}
 
 	return nil
 }
@@ -286,8 +393,13 @@ func (tool *Tool) Main() error {
 		}
 	}
 
+	series := []seriesConfig{
+		{"hourly", time.Hour, 3},
+		{"tensec", 10 * time.Second, 3},
+	}
+
 	for _, d := range targetDatasets {
-		if err := tool.performSnapshots(d); err != nil {
+		if err := tool.performSnapshots(d, series); err != nil {
 			return err
 		}
 	}

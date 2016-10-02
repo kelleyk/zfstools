@@ -14,7 +14,8 @@ func TestParseSnapName(t *testing.T) {
 		path string
 		meta *snapMetadata
 	}{
-		{"ds@zfs-auto-snap_daily_2010.01.02_03.04.05", &snapMetadata{dataset: "ds", label: "daily", ts: time.Date(2010, 1, 2, 3, 4, 5, 0, time.UTC)}},
+		{"ds@zfs-auto-snap_daily_2010-01-02T03:04:05Z", &snapMetadata{dataset: "ds", label: "daily", ts: time.Date(2010, 1, 2, 3, 4, 5, 0, time.UTC)}},
+		{"ds@some-other-prefix_daily_2010-01-02T03:04:05Z", nil},
 	} {
 		meta, err := parseSnapName(prefix, tt.path)
 

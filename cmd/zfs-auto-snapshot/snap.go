@@ -4,16 +4,19 @@ import (
 	"fmt"
 	"regexp"
 	"time"
+
+	"github.com/kelleyk/gokk"
 )
 
 const (
 	// `Mon Jan 2 15:04:05 -0700 MST 2006`
-	snapNameTimestampFormat = `2006.01.02_15.04.05`
+	snapNameTimestampFormat = time.RFC3339
 )
 
 var (
-	// dataset@zfs-auto-snap_YYYY.MM.DD_HHmm.SS
-	snapNameRegexp = regexp.MustCompile(`^(.*)@(.+)_([^_]+)_(\d{4}\.\d{2}\.\d{2}_\d{2}\.\d{2}\.\d{2})$`)
+	// dataset@zfs-auto-snap_label_ts
+	//   where ts format = e.g. `2006-01-02T15:04:05Z07:00`
+	snapNameRegexp = regexp.MustCompile(`(?i)^(.*)@(.+)_([^_]+)_(` + gokk.RFC3339Pattern + `)$`)
 )
 
 type snapMetadata struct {
@@ -32,14 +35,12 @@ func parseSnapName(expectedPrefix, path string) (*snapMetadata, error) {
 	m := snapNameRegexp.FindStringSubmatch(path)
 	if len(m) == 0 {
 		// No regexp match.
-		fmt.Printf("no regexp match")
 		return nil, nil
 	}
 	dataset, snapPrefix, label, tsStr := m[1], m[2], m[3], m[4]
 
 	if snapPrefix != expectedPrefix {
 		// Wrong prefix; no match.
-		fmt.Printf("bad prefix")
 		return nil, nil
 	}
 
@@ -55,3 +56,9 @@ func parseSnapName(expectedPrefix, path string) (*snapMetadata, error) {
 		ts:      ts,
 	}, nil
 }
+
+type byTS []*snapMetadata
+
+func (a byTS) Len() int           { return len(a) }
+func (a byTS) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a byTS) Less(i, j int) bool { return a[i].ts.After(a[j].ts) }
