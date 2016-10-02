@@ -43,5 +43,3 @@ It will respond by printing the names of the devices backing the pool that conta
     /dev/mapper/disk1
     /dev/mapper/disk2
     /dev/mapper/disk3
-
-
