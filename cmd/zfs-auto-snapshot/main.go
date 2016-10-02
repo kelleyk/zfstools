@@ -41,8 +41,6 @@ var (
 
 	configPath = flag.String("config", "", "Path to configuration file.")
 
-	// {label, interval} have been moved to per-series configuration in the configuration file.
-
 	// TODO: implement me:
 	// event = flag.String("event", "", "Set the com.sun:auto-snapshot-desc property to EVENT.")
 
@@ -50,11 +48,11 @@ var (
 	defaultExclude = flag.Bool("default-exclude", false, "Exclude datasets if com.sun:auto-snapshot is unset.")
 	skipScrub      = flag.Bool("skip-scrub", true, "Do not snapshot filesystems in scrubbing pools.") // XXX: skip-scan instead?
 
-	debug   = flag.Bool("default", false, "Print debugging messages.")
-	quiet   = flag.Bool("quiet", false, "Suppress warnings and notices at the console.")
-	syslog  = flag.Bool("syslog", false, "Write messages into the system log.")
-	verbose = flag.Bool("verbose", false, "Print info messages.")
-	prefix  = flag.String("prefix", "zfs-auto-snap", "")
+	debug = flag.Bool("default", false, "Print debugging messages.")
+	// quiet   = flag.Bool("quiet", false, "Suppress warnings and notices at the console.")
+	// syslog  = flag.Bool("syslog", false, "Write messages into the system log.")
+	// verbose = flag.Bool("verbose", false, "Print info messages.")
+	prefix = flag.String("prefix", "zfs-auto-snap", "XXX: write usage string")
 
 	// send-full, send-incr, sep
 )
