@@ -29,3 +29,5 @@ You can mark specific datasets by setting a property on them.
 
 By default, a snapshot is taken of any selected dataset that does not have this property explicitly set to `false`.  If
 `-default-exclude` is given, snapshots are only taken of those selected datasets that have it explicitly set to `true`.
+
+If you'd like verbose output, try adding the `-log-level=INFO` option; for maximum verbosity, use `-log-level=DEBUG`.
