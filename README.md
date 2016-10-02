@@ -31,3 +31,17 @@ By default, a snapshot is taken of any selected dataset that does not have this 
 `-default-exclude` is given, snapshots are only taken of those selected datasets that have it explicitly set to `true`.
 
 If you'd like verbose output, try adding the `-log-level=INFO` option; for maximum verbosity, use `-log-level=DEBUG`.
+
+## `zfs-backing-devs`
+
+`zfs-backing-devs` is a simple utility.  It takes a single argument, which is the name of any dataset.
+
+It will respond by printing the names of the devices backing the pool that contains the given dataset, one per line.
+
+    $ zfs-backing-devs poolname/foo/bar
+    /dev/mapper/disk0
+    /dev/mapper/disk1
+    /dev/mapper/disk2
+    /dev/mapper/disk3
+
+

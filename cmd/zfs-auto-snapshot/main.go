@@ -32,8 +32,7 @@ const (
 
 var (
 	logLevel = flag.String("log-level", "WARN", "XXX: write usage string")
-
-	help = flag.Bool("help", false, "Print this usage message.")
+	help     = flag.Bool("help", false, "Print this usage message.")
 
 	dryRun       = flag.Bool("dry-run", false, "Print actions without actually doing anything.  This flag overrides all other flags that enable or disable particular actions.")
 	allowCreate  = flag.Bool("create", true, "Create new snapshots when appropriate (per configuration).")
