@@ -1,0 +1,10 @@
+# This unit is activated periodically by zfs-auto-snapshot.timer.
+#
+# You need only put it in /etc/systemd/system.
+
+[Unit]
+Description=Automatic snapshots of ZFS datasets
+
+[Service]
+Type=oneshot
+ExecStart=/opt/kelleyk/bin/zfs-auto-snapshot -config=/opt/kelleyk/etc/zfs-auto-snapshot.yaml //

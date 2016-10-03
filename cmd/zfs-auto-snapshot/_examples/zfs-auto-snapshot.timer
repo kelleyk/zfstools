@@ -1,0 +1,17 @@
+# You'll need to 'enable' and 'start' this unit just like any other.
+#
+# Put this and zfs-auto-snapshot.service in /etc/systemd/system and then issue
+#   $ systemd enable zfs-auto-snapshot.timer
+#   $ systemd start zfs-auto-snapshot.timer
+
+[Unit]
+Description=Automatic snapshots of ZFS datasets
+
+[Timer]
+# Run 15min after boot and then again every hour.  This is what I use on a machine where the most-frequent snapshot
+# series is hourly.
+OnBootSec=15min
+OnUnitActiveSec=1hr
+
+[Install]
+WantedBy=timers.target

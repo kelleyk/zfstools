@@ -32,6 +32,9 @@ By default, a snapshot is taken of any selected dataset that does not have this 
 
 If you'd like verbose output, try adding the `-log-level=INFO` option; for maximum verbosity, use `-log-level=DEBUG`.
 
+I typically run the utility using e.g. `cron` or `systemd` at the interval of the most-frequent snapshot series.  For
+examples of the systemd units that I use on one of my machines, see `cmd/zfs-auto-snapshot/_examples`.
+
 ## `zfs-backing-devs`
 
 `zfs-backing-devs` is a simple utility.  It takes a single argument, which is the name of any dataset.
