@@ -15,7 +15,7 @@ type seriesConfig struct {
 }
 
 type configFile struct {
-	Series []*seriesConfig
+	Series []seriesConfig
 	Foo    string
 }
 

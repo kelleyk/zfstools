@@ -145,14 +145,15 @@ func (tool *Tool) Main() error {
 	l.WithFields(logrus.Fields{"seriesQty": len(conf.Series)}).Info("loaded configuration file")
 	for _, series := range conf.Series {
 		l.WithFields(logrus.Fields{
-			"label":    series.Label,
+			"series":   series.Label,
 			"interval": series.Interval,
 			"keep":     series.Keep,
 		}).Info("loaded series configuration")
 	}
 
+	l.WithFields(logrus.Fields{"datasets": len(targetDatasets)}).Info("examining selected datasets")
 	for _, d := range targetDatasets {
-		if err := tool.manageSnapshots(d, []seriesConfig{}); err != nil {
+		if err := tool.manageSnapshots(d, conf.Series); err != nil {
 			return err
 		}
 	}
@@ -347,14 +348,15 @@ func (tool *Tool) manageSnapshots(d zfs.Dataset, series []seriesConfig) error {
 	}
 
 	for _, s := range series {
+		tool.l.WithFields(logrus.Fields{"dataset": dsPath, "series": s.Label}).Info("managing snapshots")
+
 		snaps, err := tool.getSnapshots(d, s.Label)
 		if err != nil {
 			return err
 		}
 
-		tool.l.Debugf("snaps:\n")
 		for _, snap := range snaps {
-			tool.l.Debugf("%#v  ts=%s\n", *snap, snap.ts)
+			tool.l.Debugf("existing snapshot: %s", snap.ts)
 		}
 
 		now := time.Now()
@@ -364,8 +366,8 @@ func (tool *Tool) manageSnapshots(d zfs.Dataset, series []seriesConfig) error {
 		}
 
 		if len(snaps) == 0 || now.Sub(snaps[0].ts) >= s.Interval {
-			tool.l.WithFields(logrus.Fields{"dataset": dsPath, "label": s.Label, "allowCreate": tool.allowCreate}).Info(
-				"no snaps, or newest snap is still too old; will take a new one")
+			tool.l.WithFields(logrus.Fields{"dataset": dsPath, "series": s.Label, "allowCreate": tool.allowCreate}).Info(
+				"taking new snapshot")
 
 			meta := &snapMetadata{
 				dataset: dsPath,
@@ -386,7 +388,7 @@ func (tool *Tool) manageSnapshots(d zfs.Dataset, series []seriesConfig) error {
 		}
 
 		if s.Keep != -1 && len(snaps) > s.Keep {
-			tool.l.WithFields(logrus.Fields{"dataset": dsPath, "label": s.Label, "allowDestroy": tool.allowDestroy}).Info("removing one or more snapshots")
+			// tool.l.WithFields(logrus.Fields{"dataset": dsPath, "series": s.Label, "allowDestroy": tool.allowDestroy}).Info("removing one or more snapshots")
 			if tool.allowDestroy {
 				if err := tool.removeSnapshots(d, snaps[s.Keep:]); err != nil {
 					return err
